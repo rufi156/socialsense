@@ -162,8 +162,9 @@ cython_debug/
 #.idea/
 
 Models
-.pth
-.pth.tar
+*.pth
+*.pth.tar
 
 Pickles
-.pkl
+*.pkl
+
