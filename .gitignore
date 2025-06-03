@@ -168,3 +168,9 @@ Models
 Pickles
 *.pkl
 
+# training dataset
+data/
+
+#tensorboard stats and model save checkpoints
+tensorboard/
+checkpoints/
