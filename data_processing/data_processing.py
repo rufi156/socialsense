@@ -228,7 +228,7 @@ class DualImageDataset(Dataset):
         domain_labels = self.df.iloc[idx]['domain']
         domain_index = self.domain_to_index[domain_labels]
         
-        return yolo_image, depth_image, torch.from_numpy(scaled_labels), domain_index
+        return depth_image, yolo_image, torch.from_numpy(scaled_labels), domain_index
 
 class ImageLabelDataset(Dataset):
     def __init__(self, df, transform=None, resize_img_to=(288, 512), return_labels=True):
