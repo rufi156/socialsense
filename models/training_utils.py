@@ -57,28 +57,13 @@ def heuristic_dualbranch_batch(model, batch, device, **kwargs):
     inputs1, inputs2, labels, domain_labels = batch
     inputs1, inputs2, labels, domain_labels = inputs1.to(device), inputs2.to(device), labels.to(device), domain_labels.to(device)
     mse_criterion = kwargs['mse_criterion']
-    ce_criterion = kwargs['ce_criterion']
 
     outputs = model(inputs1, inputs2)
 
     loss = mse_criterion(outputs['output'], labels)
     loss.backward()
-
-    class_optimiser = kwargs['class_optimizer']
-    class_optimiser.zero_grad()
-    inv_domain_loss = ce_criterion(outputs['invariant_domain'], domain_labels)
-    spec_domain_loss = ce_criterion(outputs['specific_domain'], domain_labels)
-    (inv_domain_loss + spec_domain_loss).backward()
-    class_optimiser.step()
-    inv_acc = (outputs['invariant_domain'].argmax(1) == domain_labels).float().mean().item()
-    spec_acc = (outputs['specific_domain'].argmax(1) == domain_labels).float().mean().item()
     
-    metrics = {
-        'inv_domain': inv_domain_loss.item(),
-        'spec_domain': spec_domain_loss.item(),
-        'inv_acc': inv_acc,
-        'spec_acc': spec_acc
-    }
+    metrics = {}
     return loss, metrics
 
 
