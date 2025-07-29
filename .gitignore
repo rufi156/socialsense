@@ -164,6 +164,8 @@ cython_debug/
 #Models
 *.pth
 *.pth.tar
+*.pt
+
 
 #Pickles
 *.pkl
