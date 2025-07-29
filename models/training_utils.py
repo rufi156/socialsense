@@ -53,11 +53,9 @@ def dann_batch(model, batch, device, detach_base, binary, full_replay, loss_para
     }
     return total_loss, metrics
 
-def heuristic_dualbranch_batch(model, batch, device, detach_base, binary, full_replay, loss_params={}, **kwargs):
+def heuristic_dualbranch_batch(model, batch, device, **kwargs):
     inputs1, inputs2, labels, domain_labels = batch
     inputs1, inputs2, labels, domain_labels = inputs1.to(device), inputs2.to(device), labels.to(device), domain_labels.to(device)
-    domain_to_idx = kwargs['domain_to_idx']
-    # domain_labels = torch.tensor([domain_to_idx[d] for d in domain_labels], device=device)
     mse_criterion = kwargs['mse_criterion']
     ce_criterion = kwargs['ce_criterion']
 
@@ -224,10 +222,10 @@ def evaluate_model(model, dataloader, criterion, device , tsne=None):
 
     return (val_loss, tsne) if tsne else val_loss
 
-def cross_domain_validation(model, domain_dataloaders, criterion, device, tsne=None):
+def cross_domain_validation(model, domain_dataloaders, criterion, device, validation_set='val', tsne=None):
     results = {}
     for domain, loaders in domain_dataloaders.items():
-        val_loader = loaders['val']
+        val_loader = loaders[validation_set]
         if tsne:
             val_loss, tsne = evaluate_model(model, val_loader, criterion, device, tsne)
         else:
@@ -276,10 +274,11 @@ def collect_gradients(model):
 
 def unified_train_loop(
     model, domains, domain_dataloaders, buffer, optimizer, device,
-    batch_fn, batch_kwargs, loss_params, num_epochs=5, exp_name="exp", 
-    gradient_clipping=False, detach_base=False, binary=False, full_replay=False, collect_tsne_data=False, restart={}, 
-    eval_buffer=False, checkpoint_dir="../checkpoints"
+    batch_fn, batch_kwargs, num_epochs=5, exp_name="exp", 
+    gradient_clipping=False, collect_tsne_data=False, restart={}, 
+    eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
 ):
+# detach_base, binary, full_replay, loss_params={} moved to kwargs
     start_domain_idx = 0
     global_step = 0
     history = {
@@ -306,7 +305,7 @@ def unified_train_loop(
     for domain_idx, current_domain in enumerate(tqdm(domains[start_domain_idx:], desc=f"Total training"), start=start_domain_idx):
         train_loader = buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain]['train'])
         if eval_buffer:
-            eval_loader = eval_buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain]['val'])
+            eval_loader = eval_buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain][validation_set])
             
         len_dataloader = len(train_loader)
         
@@ -318,14 +317,14 @@ def unified_train_loop(
             
             # for batch_idx, batch in enumerate(train_loader):
             for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Current epoch {epoch}", leave=False)):
-                if not batch_kwargs['alpha']:
+                if not batch_kwargs.get('alpha'):
                     p = (epoch * len_dataloader + batch_idx) / (num_epochs * len_dataloader)
                     alpha = 2. / (1. + np.exp(-10 * p)) - 1
                 else:
                     alpha = batch_kwargs['alpha']
 
                 optimizer.zero_grad()
-                loss, metrics = batch_fn(model, batch, device, detach_base, binary, full_replay, loss_params, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
+                loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
                 if gradient_clipping:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
@@ -346,7 +345,7 @@ def unified_train_loop(
             history['grad_norms'].append(grad_norms)
 
             # Validation on current domain
-            val_loss = evaluate_model(model, domain_dataloaders[current_domain]['val'], batch_kwargs['mse_criterion'], device)    
+            val_loss = evaluate_model(model, domain_dataloaders[current_domain][validation_set], batch_kwargs['mse_criterion'], device)    
             history['val_epoch_loss'].append(val_loss)
             if eval_buffer:
                 val_loss_buffer = evaluate_model(model, eval_loader, batch_kwargs['mse_criterion'], device)
@@ -367,9 +366,9 @@ def unified_train_loop(
             if epoch == num_epochs-1:
                 if collect_tsne_data:
                     tsne = {'social': [], 'env': [], 'domains': []}
-                    cross_val, tsne_data = cross_domain_validation(model, domain_dataloaders, batch_kwargs['mse_criterion'], device, tsne)
+                    cross_val, tsne_data = cross_domain_validation(model, domain_dataloaders, batch_kwargs['mse_criterion'], device=device, validation_set=validation_set, tsne=tsne)
                 else:
-                    cross_val = cross_domain_validation(model, domain_dataloaders, batch_kwargs['mse_criterion'], device)
+                    cross_val = cross_domain_validation(model, domain_dataloaders, batch_kwargs['mse_criterion'], device=device, validation_set=validation_set)
                 history['cross_domain_val'].append(cross_val)
 
                 # Only save last model per domain to save space
@@ -392,6 +391,6 @@ def unified_train_loop(
             
         buffer.update_buffer(current_domain, domain_dataloaders[current_domain]['train'].dataset)
         if eval_buffer:
-            eval_buffer.update_buffer(current_domain, domain_dataloaders[current_domain]['val'].dataset)
+            eval_buffer.update_buffer(current_domain, domain_dataloaders[current_domain][validation_set].dataset)
     return history
 
