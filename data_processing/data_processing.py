@@ -236,6 +236,7 @@ class ImageLabelDataset(Dataset):
         self.resize_img_to = resize_img_to
         self.transform = transform or self._get_transform()
         self.return_labels = return_labels
+        self.domain_to_index = {domain: idx for idx, domain in enumerate(df['domain'].unique())}
         
     
     def _get_transform(self):
@@ -261,10 +262,12 @@ class ImageLabelDataset(Dataset):
         image = self.transform(image)
 
         raw_labels = self.df.iloc[idx][LABEL_COLS].values.astype(np.float32)
-        scaled_labels = (raw_labels - 1) / 4  # Convert 1-5 → 0-1
-        domain_labels = self.df.at[idx, 'domain']
+        scaled_labels = (raw_labels - 1) / 4
+        
+        domain_labels = self.df.iloc[idx]['domain']
+        domain_index = self.domain_to_index[domain_labels]
   
-        return (image, torch.from_numpy(scaled_labels), domain_labels) if self.return_labels else image
+        return (image, torch.from_numpy(scaled_labels), domain_index) if self.return_labels else image
 
 def create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, return_splits=False, double_img=False, transforms=None, num_workers=0):
     """Create train/val/test dataloaders using image_path as unique key"""
@@ -296,9 +299,9 @@ def create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), s
         val_dataset = DualImageDataset(val_df, transforms[0], transforms[1], resize_img_to=resize_img_to)
         test_dataset = DualImageDataset(test_df, transforms[0], transforms[1], resize_img_to=resize_img_to)
     else:
-        train_dataset = ImageLabelDataset(train_df, resize_img_to=resize_img_to)
-        val_dataset = ImageLabelDataset(val_df, resize_img_to=resize_img_to)
-        test_dataset = ImageLabelDataset(test_df, resize_img_to=resize_img_to)
+        train_dataset = ImageLabelDataset(train_df, transform=transforms, resize_img_to=resize_img_to)
+        val_dataset = ImageLabelDataset(val_df, transform=transforms, resize_img_to=resize_img_to)
+        test_dataset = ImageLabelDataset(test_df, transform=transforms, resize_img_to=resize_img_to)
     
     # Create loaders
     num_workers = 0
