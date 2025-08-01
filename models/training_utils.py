@@ -54,11 +54,20 @@ def dann_batch(model, batch, device, detach_base, binary, full_replay, loss_para
     return total_loss, metrics
 
 def heuristic_dualbranch_batch(model, batch, device, **kwargs):
-    inputs1, inputs2, labels, domain_labels = batch
-    inputs1, inputs2, labels, domain_labels = inputs1.to(device), inputs2.to(device), labels.to(device), domain_labels.to(device)
+    if len(batch) == 4:
+        inputs1, inputs2, labels, domain_labels = batch
+        inputs1, inputs2, labels, domain_labels = inputs1.to(device), inputs2.to(device), labels.to(device), domain_labels.to(device)
+        inputs = (inputs1, inputs2)
+    elif len(batch) == 3:
+        inputs1, labels, domain_labels = batch
+        empty = inputs1.new_empty(inputs1.size(0), 0) 
+        empty = empty.to(device)
+        inputs1, labels, domain_labels = inputs1.to(device), labels.to(device), domain_labels.to(device)
+        inputs = (inputs1, empty)
+
     mse_criterion = kwargs['mse_criterion']
 
-    outputs = model(inputs1, inputs2)
+    outputs = model(*inputs)
 
     loss = mse_criterion(outputs['output'], labels)
     loss.backward()
@@ -187,7 +196,9 @@ def evaluate_model(model, dataloader, criterion, device , tsne=None):
                 inputs, labels, _ = batch
                 inputs = inputs.to(device, dtype=torch.float32)
                 labels = labels.to(device, dtype=torch.float32)
-                inputs = (inputs,)
+                empty = inputs.new_empty(inputs.size(0), 0) 
+                empty = empty.to(device)
+                inputs = (inputs,empty)
             else:
                 raise ValueError(f"Batch contains {len(batch)} objects. Should contain 3 or 4 - image/two, labels, domain_labels")
 
