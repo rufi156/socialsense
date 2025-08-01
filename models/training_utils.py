@@ -68,7 +68,6 @@ def heuristic_dualbranch_batch(model, batch, device, **kwargs):
     outputs = model(*inputs)
 
     loss = mse_criterion(outputs['output'], labels)
-    loss.backward()
     
     metrics = {}
     return loss, metrics
@@ -272,7 +271,7 @@ def unified_train_loop(
     gradient_clipping=False, collect_tsne_data=False, restart={}, 
     eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
 ):
-# detach_base, binary, full_replay, loss_params={} moved to kwargs
+    scaler = torch.amp.GradScaler('cuda')
     start_domain_idx = 0
     global_step = 0
     history = {
@@ -286,8 +285,8 @@ def unified_train_loop(
     
     if restart:
         # Populate history
-        global_step = restart['global_step']
-        history = restart['history']
+        global_step = restart.get('global_step', 0)
+        history = restart.get('history', {})
         # Populate buffer
         start_domain_idx = domains.index(restart['domain'])
         for domain_idx, current_domain in enumerate(domains[:start_domain_idx]):
@@ -318,10 +317,14 @@ def unified_train_loop(
                     alpha = batch_kwargs['alpha']
 
                 optimizer.zero_grad()
-                loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
+                with torch.autocast('cuda', dtype=torch.float16):
+                    loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
+                scaler.scale(loss).backward()
                 if gradient_clipping:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
+
                 batch_size = batch[0].size(0)
                 epoch_loss += loss.item() * batch_size
                 samples += batch_size
