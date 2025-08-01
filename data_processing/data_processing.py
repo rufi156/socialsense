@@ -353,6 +353,29 @@ def create_crossvalidation_loaders(df, folds=5, batch_sizes=(32, 64, 64), resize
         
     return fold_loaders
 
+
+def get_dataloader(df, batch_sizes=(32, 64, 64), resize_img_to=(224,224), return_splits=False, double_img=False, transforms=None, num_workers=0):
+    """
+    for yolo_depthanything model 224,224
+    otherwise 512, 288
+    LGR had 128,128 
+    MobileNetv2 had 224, 224
+    """
+
+    # Create domain-specific dataloaders
+    domains = df['domain'].unique()
+    domain_dataloaders = {}
+    test_split_idx = set()
+    for domain in domains:
+        domain_df = df[df['domain'] == domain]
+        #domain_df = domain_df.sample(frac=0.5, random_state=42)
+        loaders, split_idx = create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=SEED, return_splits=True, double_img=double_img, transforms=transforms, num_workers=num_workers)
+        domain_dataloaders[domain] = loaders
+        test_split_idx.update(set(split_idx['test']))
+
+    return domain_dataloaders if not return_splits else (domain_dataloaders, test_split_idx)
+
+
 import shutil
 
 def extract_data_subset(df, robot_name='Pepper'):
