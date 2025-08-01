@@ -269,7 +269,173 @@ class ImageLabelDataset(Dataset):
   
         return (image, torch.from_numpy(scaled_labels), domain_index) if self.return_labels else image
 
-def create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, return_splits=False, double_img=False, transforms=None, num_workers=0):
+def _create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
+    """Create train/val dataloaders using image_path as unique key"""
+    
+    # Get image paths as indexing for split
+    unique_images = df[['image_path']].reset_index(drop=True)
+    
+    # Split using image_path as key
+    train_paths, val_paths = train_test_split(
+        unique_images['image_path'], 
+        test_size=0.25, 
+        random_state=seed
+    )
+   
+    # Create subsets
+    train_df = df[df['image_path'].isin(train_paths)].reset_index(drop=True)
+    val_df = df[df['image_path'].isin(val_paths)].reset_index(drop=True)
+    
+
+    # Create datasets
+    if double_img:
+        train_dataset = DualImageDataset(train_df, transforms[0], transforms[1], resize_img_to=resize_img_to)
+        val_dataset = DualImageDataset(val_df, transforms[0], transforms[1], resize_img_to=resize_img_to)
+    else:
+        train_dataset = ImageLabelDataset(train_df, transform=transforms, resize_img_to=resize_img_to)
+        val_dataset = ImageLabelDataset(val_df, transform=transforms, resize_img_to=resize_img_to)
+    
+    # Create loaders
+    num_workers = 0
+    loaders = {
+        'train': DataLoader(train_dataset, batch_size=batch_sizes[0], shuffle=True, num_workers=num_workers, pin_memory=torch.cuda.is_available()),
+        'val': DataLoader(val_dataset, batch_size=batch_sizes[1], shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
+    }
+    
+    if include_test is not None:
+        test_df = include_test.reset_index(drop=True)
+        if double_img:
+            test_dataset = DualImageDataset(test_df, transforms[0], transforms[1], resize_img_to=resize_img_to)
+        else:
+            test_dataset = ImageLabelDataset(test_df, transform=transforms, resize_img_to=resize_img_to)
+        loaders['test']= DataLoader(test_dataset, batch_size=batch_sizes[2], shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
+
+    split_idx = {'train': train_paths, 'val': val_paths}
+
+    return (loaders, split_idx)
+
+
+def get_domain_dataloaders(df, return_splits=False, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
+    """
+    Creates domain stratifed dataloaders
+
+    resize notes:
+    for yolo_depthanything model 224,224
+    otherwise 512, 288
+    LGR had 128,128 
+    MobileNetv2 had 224, 224
+    """
+    domain_dataloaders = {}
+    domain_splits = {}
+    for domain in df['domain'].unique():
+        domain_df = df[df['domain'] == domain]
+        loaders, split_idx = _create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=seed, double_img=double_img, transforms=transforms, num_workers=num_workers, include_test=include_test)
+        domain_dataloaders[domain] = loaders
+        domain_splits[domain] = split_idx
+
+    return domain_dataloaders if not return_splits else (domain_dataloaders, domain_splits)
+
+
+def create_crossvalidation_loaders(df, folds=5, batch_sizes=(32, 64, 64), resize_img_to=(128, 128), num_workers=0):
+
+    transform = transforms.Compose([
+            transforms.Resize(resize_img_to),
+            transforms.ToTensor(),
+            transforms.Normalize(*NORM_VALUES)
+        ])
+
+    fold_loaders = {}
+
+    # Ignore negative number folds - treat them as exceptions
+    folds = [i for i in range(folds)]
+    df = df[df['fold'].isin(folds)]
+    
+    for fold_num in folds:
+        train_df = df[df['fold'] != fold_num].reset_index(drop=True)
+        val_df = df[df['fold'] == fold_num].reset_index(drop=True)
+
+        domains = df['domain'].unique()
+        
+        domain_loaders = {}
+        for domain in domains:
+            domain_train = train_df[train_df['domain'] == domain].reset_index(drop=True)
+            domain_val = val_df[val_df['domain'] == domain].reset_index(drop=True)
+            
+            train_dataset = ImageLabelDataset(domain_train, transform)
+            val_dataset = ImageLabelDataset(domain_val, transform)
+        
+            domain_loaders[domain] = {
+                'train': DataLoader(train_dataset, batch_size=batch_sizes[0], shuffle=True, num_workers=num_workers, pin_memory=torch.cuda.is_available()),
+                'val': DataLoader(val_dataset, batch_size=batch_sizes[1], shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
+            }
+        fold_loaders[fold_num] = domain_loaders
+        
+    return fold_loaders
+
+import shutil
+
+def extract_data_subset(df, robot_name='Pepper'):
+    # Modify the saving section at the end
+    # Create the required directory structure
+    project_root = Path.cwd().parent  # Goes up from experiments/ to project/
+    data_dir = project_root / "data"
+    images_dir = data_dir / "images"
+
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    # Filter for Pepper first
+    pepper_df = df[df['robot'] == robot_name].copy()
+    pepper_df = pepper_df.reset_index(drop=True)
+
+    # Copy images and update paths
+    def copy_and_update_path(row):
+        src_path = Path(row['image_path'])
+        dst_path = images_dir / src_path.name
+        
+        if not dst_path.exists():
+            shutil.copy2(src_path, dst_path)
+        
+        return str(dst_path.relative_to(project_root))
+
+    pepper_df['image_path'] = pepper_df.apply(copy_and_update_path, axis=1)
+
+    # Save the filtered dataframe
+    pepper_df.to_pickle(data_dir / "pepper_data.pkl")
+    return pepper_df
+
+def main(aggregate_by='robot'):
+    try:
+        raw_df = consolidate_data(DATASETS)
+        validate_raw_data(raw_df)
+        raw_df['image_path'] = raw_df.apply(resolve_image_path, axis=1)
+        if aggregate_by:
+            aggregated_df = aggregate_labels(raw_df)
+            validate_final_data(aggregated_df)
+    except Exception as e:
+        print(f"Pipeline failed: {str(e)}")
+        raise
+
+    if aggregate_by:
+        aggregated_df.to_pickle("../data/processed_all_data.pkl")
+    else:
+        raw_df.to_pickle("../data/raw_all_data.pkl")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--aggregate_by", nargs="?", const="robot", default="robot",
+                        help='Set to "robot" (default) or "none" to skip aggregation')
+    args = parser.parse_args()
+
+    arg = None if args.aggregate_by.lower() == "none" else args.aggregate_by
+    main(aggregate_by=arg)
+
+
+# ============= LEGACY =================
+# ----------- Legacy code for splitting dataset, generating dataloaders for train, validation and test. ------------
+# Since then we switched to permanent separation of train vs test and changing all training datast operations to contain only train and val datasets.
+
+def legacy_create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, return_splits=False, double_img=False, transforms=None, num_workers=0):
     """Create train/val/test dataloaders using image_path as unique key"""
     
     # Get image paths as indexing for split
@@ -317,45 +483,13 @@ def create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), s
     else:
         return loaders
 
-def create_crossvalidation_loaders(df, folds=5, batch_sizes=(32, 64, 64), resize_img_to=(128, 128), num_workers=0):
-
-    transform = transforms.Compose([
-            transforms.Resize(resize_img_to),
-            transforms.ToTensor(),
-            transforms.Normalize(*NORM_VALUES)
-        ])
-
-    fold_loaders = {}
-
-    # Ignore negative number folds - treat them as exceptions
-    folds = [i for i in range(folds)]
-    df = df[df['fold'].isin(folds)]
-    
-    for fold_num in folds:
-        train_df = df[df['fold'] != fold_num].reset_index(drop=True)
-        val_df = df[df['fold'] == fold_num].reset_index(drop=True)
-
-        domains = df['domain'].unique()
-        
-        domain_loaders = {}
-        for domain in domains:
-            domain_train = train_df[train_df['domain'] == domain].reset_index(drop=True)
-            domain_val = val_df[val_df['domain'] == domain].reset_index(drop=True)
-            
-            train_dataset = ImageLabelDataset(domain_train, transform)
-            val_dataset = ImageLabelDataset(domain_val, transform)
-        
-            domain_loaders[domain] = {
-                'train': DataLoader(train_dataset, batch_size=batch_sizes[0], shuffle=True, num_workers=num_workers, pin_memory=torch.cuda.is_available()),
-                'val': DataLoader(val_dataset, batch_size=batch_sizes[1], shuffle=False, num_workers=num_workers, pin_memory=torch.cuda.is_available())
-            }
-        fold_loaders[fold_num] = domain_loaders
-        
-    return fold_loaders
-
-
-def get_dataloader(df, batch_sizes=(32, 64, 64), resize_img_to=(224,224), return_splits=False, double_img=False, transforms=None, num_workers=0):
+def legacy_get_dataloader(df, batch_sizes=(32, 64, 64), resize_img_to=(224,224), return_splits=False, double_img=False, transforms=None, num_workers=0):
     """
+    Creates domain stratifed dataloaders
+    Returns:
+    dataloaders and a cumulative indexes for the test set for checking replicability
+
+    resize notes:
     for yolo_depthanything model 224,224
     otherwise 512, 288
     LGR had 128,128 
@@ -369,68 +503,37 @@ def get_dataloader(df, batch_sizes=(32, 64, 64), resize_img_to=(224,224), return
     for domain in domains:
         domain_df = df[df['domain'] == domain]
         #domain_df = domain_df.sample(frac=0.5, random_state=42)
-        loaders, split_idx = create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=SEED, return_splits=True, double_img=double_img, transforms=transforms, num_workers=num_workers)
+        loaders, split_idx = legacy_create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=SEED, return_splits=True, double_img=double_img, transforms=transforms, num_workers=num_workers)
         domain_dataloaders[domain] = loaders
         test_split_idx.update(set(split_idx['test']))
 
     return domain_dataloaders if not return_splits else (domain_dataloaders, test_split_idx)
 
+#----------- One off separation of test set for replicability.------------
 
-import shutil
+def _separate_train_test():
+    source_dir="../data/pepper_data.pkl"
+    transform = transforms.Compose([
+        transforms.Resize((144,256)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                            std=[0.229, 0.224, 0.225])
+    ])
+    df = pd.read_pickle(source_dir)
+    df['image_path_env'] = df['image_path'].apply(lambda p: str(Path('../data/masked/environment') / Path(p).name))
+    df['image_path_social'] = df['image_path'].apply(lambda p: str(Path('../data/masked/social') / Path(p).name))
+    _, splits1 = legacy_get_dataloader(df, batch_sizes=(32, 64, 64), return_splits=True, double_img=False, transforms=transform, num_workers=0)
+    # Normalise paths
+    normalized_set = {Path(p).as_posix() for p in splits1}
+    df['image_path'] = df['image_path'].apply(lambda x: Path(x).as_posix())
+    df['image_path_env'] = df['image_path_env'].apply(lambda x: Path(x).as_posix())
+    df['image_path_social'] = df['image_path_social'].apply(lambda x: Path(x).as_posix())
 
-def extract_data_subset(df, robot_name='Pepper'):
-    # Modify the saving section at the end
-    # Create the required directory structure
-    project_root = Path.cwd().parent  # Goes up from experiments/ to project/
-    data_dir = project_root / "data"
-    images_dir = data_dir / "images"
+    df_test = df[df['image_path'].isin(normalized_set)]
+    df_train = df[~df['image_path'].isin(normalized_set)]
 
-    images_dir.mkdir(parents=True, exist_ok=True)
+    assert df_train['image_path'].isin(df_test['image_path']).any() == False
+    assert df_test['image_path'].isin(df_train['image_path']).any() == False
 
-    # Filter for Pepper first
-    pepper_df = df[df['robot'] == robot_name].copy()
-    pepper_df = pepper_df.reset_index(drop=True)
-
-    # Copy images and update paths
-    def copy_and_update_path(row):
-        src_path = Path(row['image_path'])
-        dst_path = images_dir / src_path.name
-        
-        if not dst_path.exists():
-            shutil.copy2(src_path, dst_path)
-        
-        return str(dst_path.relative_to(project_root))
-
-    pepper_df['image_path'] = pepper_df.apply(copy_and_update_path, axis=1)
-
-    # Save the filtered dataframe
-    pepper_df.to_pickle(data_dir / "pepper_data.pkl")
-    return pepper_df
-
-
-def main(aggregate_by='robot'):
-    try:
-        raw_df = consolidate_data(DATASETS)
-        validate_raw_data(raw_df)
-        raw_df['image_path'] = raw_df.apply(resolve_image_path, axis=1)
-        if aggregate_by:
-            aggregated_df = aggregate_labels(raw_df)
-            validate_final_data(aggregated_df)
-    except Exception as e:
-        print(f"Pipeline failed: {str(e)}")
-        raise
-
-    if aggregate_by:
-        aggregated_df.to_pickle("../data/processed_all_data.pkl")
-    else:
-        raw_df.to_pickle("../data/raw_all_data.pkl")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--aggregate_by", nargs="?", const="robot", default="robot",
-                        help='Set to "robot" (default) or "none" to skip aggregation')
-    args = parser.parse_args()
-
-    arg = None if args.aggregate_by.lower() == "none" else args.aggregate_by
-    main(aggregate_by=arg)
+    df_test.to_pickle(source_dir.replace('.pkl', '_test.pkl'))
+    df_train.to_pickle(source_dir.replace('.pkl', '_train.pkl'))
