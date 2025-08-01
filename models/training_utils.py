@@ -60,10 +60,8 @@ def heuristic_dualbranch_batch(model, batch, device, **kwargs):
         inputs = (inputs1, inputs2)
     elif len(batch) == 3:
         inputs1, labels, domain_labels = batch
-        empty = inputs1.new_empty(inputs1.size(0), 0) 
-        empty = empty.to(device)
         inputs1, labels, domain_labels = inputs1.to(device), labels.to(device), domain_labels.to(device)
-        inputs = (inputs1, empty)
+        inputs = (inputs1,)
 
     mse_criterion = kwargs['mse_criterion']
 
@@ -291,7 +289,7 @@ def unified_train_loop(
         global_step = restart['global_step']
         history = restart['history']
         # Populate buffer
-        start_domain_idx = np.where(domains == restart['domain'])[0][0]
+        start_domain_idx = domains.index(restart['domain'])
         for domain_idx, current_domain in enumerate(domains[:start_domain_idx]):
             buffer.update_buffer(current_domain, domain_dataloaders[current_domain]['train'].dataset) 
         print(f"Restarting from domain {restart['domain']} index {start_domain_idx}")
