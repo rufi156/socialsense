@@ -62,6 +62,8 @@ def heuristic_dualbranch_batch(model, batch, device, **kwargs):
         inputs1, labels, domain_labels = batch
         inputs1, labels, domain_labels = inputs1.to(device), labels.to(device), domain_labels.to(device)
         inputs = (inputs1,)
+    else:
+        raise ValueError(f"Batch contains {len(batch)} objects. Should contain 3 or 4 - image/two, labels, domain_labels")
 
     mse_criterion = kwargs['mse_criterion']
 
@@ -176,44 +178,19 @@ def dualbranch_batch(model, batch, device, detach_base, binary, full_replay, los
     }
     return total_loss, metrics
 
-#TODO: change dataset to return torch domain labels indexes not strings
 def evaluate_model(model, dataloader, criterion, device , tsne=None):
     model.eval()
     total_loss = 0.0
     total_samples = 0
     with torch.no_grad():
         for batch in dataloader:
-            if len(batch) == 4:
-                inputs1, inputs2, labels, domain_labels = batch
-                inputs1 = inputs1.to(device, dtype=torch.float32)
-                inputs2 = inputs2.to(device, dtype=torch.float32)
-                labels = labels.to(device, dtype=torch.float32)
-                inputs = (inputs1, inputs2)
-            elif len(batch) == 3:
-                inputs, labels, _ = batch
-                inputs = inputs.to(device, dtype=torch.float32)
-                labels = labels.to(device, dtype=torch.float32)
-                empty = inputs.new_empty(inputs.size(0), 0) 
-                empty = empty.to(device)
-                inputs = (inputs,empty)
-            else:
-                raise ValueError(f"Batch contains {len(batch)} objects. Should contain 3 or 4 - image/two, labels, domain_labels")
+            batch_size = batch[0].shape[0]
+            loss, _ = heuristic_dualbranch_batch(model, batch, device, mse_criterion=criterion)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
+            val_loss = total_loss/total_samples
 
-            outputs = model(*inputs)['output']
-
-            loss = criterion(outputs, labels)
-
-            total_loss += loss.item() * inputs[0].size(0)
-            total_samples += inputs[0].size(0)
-            
-            if tsne:
-                tsne['social'].append(outputs['invariant_feats'].cpu())
-                tsne['environmental'].append(outputs['specific_feats'].cpu())
-                tsne['domains'].append(domain_labels.cpu())
-
-            val_loss = total_loss / total_samples
-
-    return (val_loss, tsne) if tsne else val_loss
+    return val_loss
 
 def cross_domain_validation(model, domain_dataloaders, criterion, device, validation_set='val', tsne=None):
     results = {}
