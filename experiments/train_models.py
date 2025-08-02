@@ -47,70 +47,93 @@ default_transform = transforms.Compose([
 ])
 
 def train_scenario(name, freeze_branches, ablation, seed=42):
-    if set_seed is not None:
-        set_seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Create a unique log file for each experiment
+    log_path = os.path.join(CHECKPOINT_DIR, f"{name}_{ablation}.log")
+    logfile = open(log_path, "a", buffering=1)
+    sys.stdout = logfile
+    sys.stderr = logfile
 
-    # Only load CLIP if needed
-    transform = default_transform
-    clip_model, clip_transform = (None, None)
-    if name == 'clip':
-        clip_model, clip_transform = clip.load("ViT-B/32", device=device)
-        transform = clip_transform
+    try:
+        print("="*40)
+        print(f"STARTED: {name} | {ablation} | PID: {os.getpid()} | SEED: {seed} | {datetime.datetime.now()}")
+        print("="*40)
 
-    # Load dataframe (gcsfuse mount)
-    df = pd.read_pickle(DATA_PATH)
+        if set_seed is not None:
+            set_seed(42)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # DataLoader selection by ablation
-    if ablation == 'base':
-        domain_dataloaders = get_domain_dataloaders(
-            df, batch_sizes=(32, 64, 64), double_img=True, transforms=[transform]*2, num_workers=0, include_test=None)
-    elif ablation == 'no_mask':
-        domain_dataloaders = get_domain_dataloaders(
-            df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
-    elif ablation == 'only_soc':
-        df['image_path'] = df['image_path_social']
-        domain_dataloaders = get_domain_dataloaders(
-            df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
-    elif ablation == 'only_env':
-        df['image_path'] = df['image_path_env']
-        domain_dataloaders = get_domain_dataloaders(
-            df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
-    else:
-        raise ValueError(f"Unknown ablation: {ablation}")
+        # Only load CLIP if needed
+        transform = default_transform
+        clip_model, clip_transform = (None, None)
+        if name == 'clip':
+            clip_model, clip_transform = clip.load("ViT-B/32", device=device)
+            transform = clip_transform
 
-    print(f"\nTraining: {name} | Ablation: {ablation} | PID: {os.getpid()}")
-    setup = {'branch': name} if ablation == 'base' else {'branch': name, 'env': 'ablated'}
-    auxilary_model = clip_model if name == 'clip' else None
-    model = DualBranchModel(
-        dropout_rate=0.1, setup=setup, freeze_branches=freeze_branches, clip_model=auxilary_model
-    )
-    dual_model = model.to(device)
-    trainable_params = [p for p in dual_model.parameters() if p.requires_grad]
-    optimizer = torch.optim.Adam(trainable_params, lr=1e-3)
-    buffer = NaiveRehearsalBuffer(buffer_size=120)
-    epochs = 30
-    exp_name = f"{name}_{ablation}_dropout0.1_epochs{epochs}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    dualbranch_kwargs = {
-        'mse_criterion': nn.MSELoss(),
-        'ce_criterion': nn.CrossEntropyLoss()
-    }
-    unified_train_loop(
-        model=dual_model,
-        domains=domains,
-        domain_dataloaders=domain_dataloaders,
-        buffer=buffer,
-        optimizer=optimizer,
-        device=device,
-        batch_fn=heuristic_dualbranch_batch,
-        batch_kwargs=dualbranch_kwargs,
-        num_epochs=epochs,
-        exp_name=exp_name,
-        gradient_clipping=True,
-        collect_tsne_data=False,
-        checkpoint_dir=CHECKPOINT_DIR,
-        validation_set='val',
-    )
+        # Load dataframe (gcsfuse mount)
+        df = pd.read_pickle(DATA_PATH)
+
+        # DataLoader selection by ablation
+        if ablation == 'base':
+            domain_dataloaders = get_domain_dataloaders(
+                df, batch_sizes=(32, 64, 64), double_img=True, transforms=[transform]*2, num_workers=0, include_test=None)
+        elif ablation == 'no_mask':
+            domain_dataloaders = get_domain_dataloaders(
+                df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
+        elif ablation == 'only_soc':
+            df['image_path'] = df['image_path_social']
+            domain_dataloaders = get_domain_dataloaders(
+                df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
+        elif ablation == 'only_env':
+            df['image_path'] = df['image_path_env']
+            domain_dataloaders = get_domain_dataloaders(
+                df, batch_sizes=(32, 64, 64), double_img=False, transforms=transform, num_workers=0, include_test=None)
+        else:
+            raise ValueError(f"Unknown ablation: {ablation}")
+
+        print(f"\nTraining: {name} | Ablation: {ablation} | PID: {os.getpid()}")
+        setup = {'branch': name} if ablation == 'base' else {'branch': name, 'env': 'ablated'}
+        auxilary_model = clip_model if name == 'clip' else None
+        model = DualBranchModel(
+            dropout_rate=0.1, setup=setup, freeze_branches=freeze_branches, clip_model=auxilary_model
+        )
+        dual_model = model.to(device)
+        trainable_params = [p for p in dual_model.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(trainable_params, lr=1e-3)
+        buffer = NaiveRehearsalBuffer(buffer_size=120)
+        epochs = 30
+        exp_name = f"{name}_{ablation}_dropout0.1_epochs{epochs}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        dualbranch_kwargs = {
+            'mse_criterion': nn.MSELoss(),
+            'ce_criterion': nn.CrossEntropyLoss()
+        }
+        unified_train_loop(
+            model=dual_model,
+            domains=domains,
+            domain_dataloaders=domain_dataloaders,
+            buffer=buffer,
+            optimizer=optimizer,
+            device=device,
+            batch_fn=heuristic_dualbranch_batch,
+            batch_kwargs=dualbranch_kwargs,
+            num_epochs=epochs,
+            exp_name=exp_name,
+            gradient_clipping=True,
+            collect_tsne_data=False,
+            checkpoint_dir=CHECKPOINT_DIR,
+            validation_set='val',
+            verbose=1
+        )
+
+        print(f"COMPLETED: {name} | {ablation} | {datetime.datetime.now()}")
+
+    except Exception as exc:
+        print(f"FAILED: {name} | {ablation} | {datetime.datetime.now()}")
+        import traceback
+        traceback.print_exc()
+        raise  # propagate to main process, marks job as failed
+
+    finally:
+        logfile.close()
 
 if __name__ == "__main__":
     # Build all jobs

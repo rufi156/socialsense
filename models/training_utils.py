@@ -3,6 +3,7 @@ import torch.nn as nn
 from tqdm.notebook import tqdm, trange
 import numpy as np
 import pickle
+import datetime
 
 ### setup
 # For LGRBaseline
@@ -246,7 +247,7 @@ def unified_train_loop(
     model, domains, domain_dataloaders, buffer, optimizer, device,
     batch_fn, batch_kwargs, num_epochs=5, exp_name="exp", 
     gradient_clipping=False, collect_tsne_data=False, restart={}, 
-    eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
+    eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val', verbose=0
 ):
     scaler = torch.amp.GradScaler('cuda')
     start_domain_idx = 0
@@ -273,6 +274,7 @@ def unified_train_loop(
         
 
     for domain_idx, current_domain in enumerate(tqdm(domains[start_domain_idx:], desc=f"Total training"), start=start_domain_idx):
+        if verbose: print(f"[{exp_name}]\t{datetime.datetime.now()}: Starting domain {current_domain}")
         train_loader = buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain]['train'])
         if eval_buffer:
             eval_loader = eval_buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain][validation_set])
@@ -280,6 +282,7 @@ def unified_train_loop(
         len_dataloader = len(train_loader)
         
         for epoch in trange(num_epochs, desc=f"Current domain {current_domain}"):
+            if verbose: print(f"[{exp_name}]\t{datetime.datetime.now()}: Starting epoch {epoch}/{num_epochs}")
             model.train()
             epoch_loss = 0.0
             samples = 0
@@ -352,6 +355,7 @@ def unified_train_loop(
                     'history': history,
                     'tsne' : tsne_data,
                 }, f"{checkpoint_dir}/{exp_name}_domain{current_domain}_epoch{epoch}_step{global_step}.pt")
+                if verbose: print(f"[{exp_name}]\t{datetime.datetime.now()}: Checkpoint saved at epoch {epoch}")
             # else:
             #     # Save metrics
             #     torch.save({
@@ -362,6 +366,7 @@ def unified_train_loop(
             #     }, f"../checkpoints/{exp_name}_domain{current_domain}_epoch{epoch}_step{global_step}.pt")
             with open(f"{checkpoint_dir}/{exp_name}_history.pkl", "wb") as f:
                 pickle.dump(history, f)
+            if verbose: print(f"[{exp_name}]\t{datetime.datetime.now()}: History pickle updated")
             
         buffer.update_buffer(current_domain, domain_dataloaders[current_domain]['train'].dataset)
         if eval_buffer:
