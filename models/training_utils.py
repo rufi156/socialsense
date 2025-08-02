@@ -284,7 +284,7 @@ def unified_train_loop(
             
         len_dataloader = len(train_loader)
         
-        for epoch in trange(num_epochs, desc=f"Current domain {current_domain}"):
+        for epoch in trange(num_epochs, desc=f"Current domain {current_domain}", disable=TQDM_DISABLED):
             if TQDM_DISABLED: print(f"[{exp_name}]\t{datetime.datetime.now()}: Starting epoch {epoch}/{num_epochs}")
             model.train()
             epoch_loss = 0.0
