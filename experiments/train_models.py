@@ -121,7 +121,6 @@ def train_scenario(name, freeze_branches, ablation, seed=42):
             collect_tsne_data=False,
             checkpoint_dir=CHECKPOINT_DIR,
             validation_set='val',
-            verbose=1
         )
 
         print(f"COMPLETED: {name} | {ablation} | {datetime.datetime.now()}")
