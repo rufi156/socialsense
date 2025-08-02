@@ -10,11 +10,17 @@ import numpy as np
 from sklearn.model_selection import train_test_split
 import random
 SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-torch.manual_seed(SEED)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True  # Enforce deterministic algorithms
+        torch.backends.cudnn.benchmark = False     # Disable benchmark for reproducibility
+
+    os.environ['PYTHONHASHSEED'] = str(seed)       # Seed Python hashing, which can affect ordering
+set_seed(SEED)
 
 DATASET_DIR = (Path("..") / ".." / "datasets").resolve()
 DATASETS = ["OFFICE-MANNERSDB", "MANNERSDBPlus"]
