@@ -276,7 +276,7 @@ def unified_train_loop(
         print(f"Buffer: {buffer.get_domain_distribution()}")         
         
 
-    for domain_idx, current_domain in enumerate(tqdm(domains[start_domain_idx:], desc=f"Total training", disable=TQDM_DISABLED), start=start_domain_idx):
+    for domain_idx, current_domain in enumerate(tqdm(domains[start_domain_idx:], desc=f"Total training"), start=start_domain_idx):
         if TQDM_DISABLED: print(f"[{exp_name}]\t{datetime.datetime.now()}: Starting domain {current_domain}")
         train_loader = buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain]['train'])
         if eval_buffer:
@@ -292,7 +292,7 @@ def unified_train_loop(
             batch_metrics_list = []
             
             # for batch_idx, batch in enumerate(train_loader):
-            for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Current epoch {epoch}", leave=False, disable=TQDM_DISABLED)):
+            for batch_idx, batch in enumerate(tqdm(train_loader, desc=f"Current epoch {epoch}", leave=False)):
                 if not batch_kwargs.get('alpha'):
                     p = (epoch * len_dataloader + batch_idx) / (num_epochs * len_dataloader)
                     alpha = 2. / (1. + np.exp(-10 * p)) - 1
