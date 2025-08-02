@@ -251,7 +251,8 @@ def unified_train_loop(
     gradient_clipping=False, collect_tsne_data=False, restart={}, 
     eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
 ):
-    scaler = torch.amp.GradScaler('cuda')
+    scaler = torch.amp.GradScaler('cuda') if str(device)=='cuda' else None
+    
     start_domain_idx = 0
     global_step = 0
     history = {
@@ -299,13 +300,21 @@ def unified_train_loop(
                     alpha = batch_kwargs['alpha']
 
                 optimizer.zero_grad()
-                with torch.autocast('cuda', dtype=torch.float16):
+
+                if str(device) == 'cuda':
+                    with torch.autocast('cuda', dtype=torch.float16):
+                        loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
+                    scaler.scale(loss).backward()
+                    if gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
                     loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
-                scaler.scale(loss).backward()
-                if gradient_clipping:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
+                    loss.backward()
+                    if gradient_clipping:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
 
                 batch_size = batch[0].size(0)
                 epoch_loss += loss.item() * batch_size
