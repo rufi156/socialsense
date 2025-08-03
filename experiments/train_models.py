@@ -48,9 +48,12 @@ default_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-def train_scenario(name, freeze_branches, ablation, gpu_id, seed=42):
-    torch.cuda.set_device(gpu_id)
-    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
+def train_scenario(name, freeze_branches, ablation, gpu_id=0, seed=42):
+    if torch.cuda.is_available():
+        torch.cuda.set_device(gpu_id)
+        device = torch.device(f"cuda:{gpu_id}")
+    else:
+        device = torch.device("cpu")
     
     # Create a unique log file for each experiment
     log_path = os.path.join(CHECKPOINT_DIR, f"{name}_{ablation}_{os.getpid()}.log")
