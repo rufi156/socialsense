@@ -251,7 +251,7 @@ def unified_train_loop(
     gradient_clipping=False, collect_tsne_data=False, restart={}, 
     eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
 ):
-    scaler = torch.amp.GradScaler('cuda') if str(device)=='cuda' else None
+    scaler = torch.amp.GradScaler('cuda') if torch.device(device).type == "cuda" else None
     
     start_domain_idx = 0
     global_step = 0
@@ -301,7 +301,7 @@ def unified_train_loop(
 
                 optimizer.zero_grad()
 
-                if str(device) == 'cuda':
+                if torch.device(device).type == "cuda":
                     with torch.autocast('cuda', dtype=torch.float16):
                         loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
                     scaler.scale(loss).backward()

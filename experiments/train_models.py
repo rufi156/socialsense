@@ -1,3 +1,5 @@
+import os
+os.environ["TQDM_DISABLE"] = "1"
 import pandas as pd
 from torchvision import transforms
 import numpy as np
@@ -6,7 +8,7 @@ import torch
 import torch.nn as nn
 import datetime
 import concurrent.futures
-import sys, os
+import sys
 import clip
 
 # Add module paths for imports
@@ -46,9 +48,12 @@ default_transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-def train_scenario(name, freeze_branches, ablation, seed=42):
+def train_scenario(name, freeze_branches, ablation, gpu_id, seed=42):
+    torch.cuda.set_device(gpu_id)
+    device = torch.device(f"cuda:{gpu_id}" if torch.cuda.is_available() else "cpu")
+    
     # Create a unique log file for each experiment
-    log_path = os.path.join(CHECKPOINT_DIR, f"{name}_{ablation}.log")
+    log_path = os.path.join(CHECKPOINT_DIR, f"{name}_{ablation}_{os.getpid()}.log")
     logfile = open(log_path, "a", buffering=1)
     sys.stdout = logfile
     sys.stderr = logfile
@@ -60,7 +65,6 @@ def train_scenario(name, freeze_branches, ablation, seed=42):
 
         if set_seed is not None:
             set_seed(42)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Only load CLIP if needed
         transform = default_transform
@@ -124,31 +128,38 @@ def train_scenario(name, freeze_branches, ablation, seed=42):
         )
 
         print(f"COMPLETED: {name} | {ablation} | {datetime.datetime.now()}")
-
+        return (name, ablation, "success", None)
     except Exception as exc:
         print(f"FAILED: {name} | {ablation} | {datetime.datetime.now()}")
         import traceback
-        traceback.print_exc()
-        raise  # propagate to main process, marks job as failed
-
+        tb_str = traceback.format_exc()
+        print(tb_str)
+        return (name, ablation, "failure", tb_str)
     finally:
         logfile.close()
 
 if __name__ == "__main__":
-    # Build all jobs
     jobs = []
-    for name, (freeze_branches,) in testing_scenarios.items():
-        for ablation in ablations:
-            jobs.append((name, freeze_branches, ablation))
+    gpu_count = 4
+    job_idx = 0
+    for ablation in ablations:
+        for name, (freeze_branches,) in testing_scenarios.items():
+            gpu_id = job_idx % gpu_count
+            jobs.append((name, freeze_branches, ablation, gpu_id))
+            job_idx += 1
 
-    # Use 4 workers (physical cores)
-    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=gpu_count) as executor:
         futures = [
-            executor.submit(train_scenario, name, fb, ab)
-            for name, fb, ab in jobs
+            executor.submit(train_scenario, name, fb, ab, gpu_id)
+            for name, fb, ab, gpu_id in jobs
         ]
         for f in concurrent.futures.as_completed(futures):
             try:
-                f.result()
+                name, ablation, status, tb_str = f.result()
+                if status == "success":
+                    print(f"[COMPLETED] {name} | {ablation}")
+                else:
+                    print(f"[FAILED] {name} | {ablation}")
+                    print(f"Error Traceback:\n{tb_str}")
             except Exception as e:
-                print(f"Job failed: {e}")
+                print(f"[FATALERROR] worker failed to return result: {e}")
