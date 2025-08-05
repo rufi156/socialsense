@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 import copy
+import warnings
 
 def intermediate_layer_size(input, output, n_layers):
     start_exp = (output + 1).bit_length()
@@ -35,12 +36,14 @@ class CLIPEncoderWrapper(nn.Module):
             return self.clip_model.encode_image(x)
 
 class DualBranchModel(nn.Module):
-    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False):
+    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False, branch_norm=False):
         assert not (setup['branch'] == 'clip' and clip_model is None), "clip_model must be provided for CLIP branch"
-        assert not (setup['branch'] == 'clip' and freeze_branches is False), "CLIP branch will be frozen regardless of freeze_branches"
+        if setup['branch'] == 'clip' and freeze_branches is False:
+            warnings.warn("CLIP branch will be frozen regardless of freeze_branches", UserWarning)
         super(DualBranchModel, self).__init__()
         self.setup = setup
         self.freeze_branches = freeze_branches
+        self.branch_norm = branch_norm
 
         if self.setup['branch'] == 'resnet18':
             model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
@@ -69,11 +72,33 @@ class DualBranchModel(nn.Module):
         elif self.setup['branch'] == 'clip':
             branch = CLIPEncoderWrapper(clip_model)
             branch_feature_dim = 512
+        
+        elif self.setup['branch'] == 'simple':
+            branch = nn.Sequential(
+                nn.Conv2d(3, 8, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),
+                nn.Conv2d(8, 16, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),
+                nn.Conv2d(16, 32, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),
+                nn.Conv2d(32, 64, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten()
+            )
+            branch_feature_dim = 64
 
         # Optional freeze params
         if self.freeze_branches:
             for p in branch.parameters():
                 p.requires_grad = False
+        
+        if self.branch_norm:
+            branch = branch.append(nn.LayerNorm(branch_feature_dim))
         
         # If using frozen CLIP reusing the model is more efficient
         if self.setup['branch'] == 'clip':
