@@ -249,7 +249,7 @@ def unified_train_loop(
     model, domains, domain_dataloaders, buffer, optimizer, device,
     batch_fn, batch_kwargs, num_epochs=5, exp_name="exp", 
     gradient_clipping=False, collect_tsne_data=False, restart={}, 
-    eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val'
+    eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val', scheduler=None
 ):
     scaler = torch.amp.GradScaler('cuda') if torch.device(device).type == "cuda" else None
     
@@ -283,6 +283,15 @@ def unified_train_loop(
             eval_loader = eval_buffer.get_loader_with_replay(current_domain, domain_dataloaders[current_domain][validation_set])
             
         len_dataloader = len(train_loader)
+
+        if scheduler is not None:
+            total_training_steps = num_epochs * len_dataloader
+            warmup_steps = int(0.05 * total_training_steps)  # 5% warmup, to be finetuned
+            lr_scheduler = scheduler(
+                optimizer,
+                num_warmup_steps=warmup_steps,
+                num_training_steps=total_training_steps
+            )
         
         for epoch in trange(num_epochs, desc=f"Current domain {current_domain}", disable=TQDM_DISABLED):
             if TQDM_DISABLED: print(f"[{exp_name}]\t{datetime.datetime.now()}: Starting epoch {epoch}/{num_epochs}")
@@ -309,12 +318,16 @@ def unified_train_loop(
                         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
+                    if scheduler is not None:
+                        lr_scheduler.step()
                 else:
                     loss, metrics = batch_fn(model, batch, device, **{**batch_kwargs, 'current_domain': current_domain, 'alpha':alpha})
                     loss.backward()
                     if gradient_clipping:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
+                    if scheduler is not None:
+                        lr_scheduler.step()
 
                 batch_size = batch[0].size(0)
                 epoch_loss += loss.item() * batch_size
