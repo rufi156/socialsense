@@ -252,6 +252,8 @@ def unified_train_loop(
     eval_buffer=False, checkpoint_dir="../checkpoints", validation_set='val', scheduler=None
 ):
     scaler = torch.amp.GradScaler('cuda') if torch.device(device).type == "cuda" else None
+    if scheduler is not None:
+        scheduler, warmup = scheduler
     
     start_domain_idx = 0
     global_step = 0
@@ -286,7 +288,7 @@ def unified_train_loop(
 
         if scheduler is not None:
             total_training_steps = num_epochs * len_dataloader
-            warmup_steps = int(0.05 * total_training_steps)  # 5% warmup, to be finetuned
+            warmup_steps = int(warmup * total_training_steps)  # 5% warmup, to be finetuned
             lr_scheduler = scheduler(
                 optimizer,
                 num_warmup_steps=warmup_steps,
@@ -328,6 +330,8 @@ def unified_train_loop(
                     optimizer.step()
                     if scheduler is not None:
                         lr_scheduler.step()
+                        
+                metrics.setdefault('lrs', []).append(optimizer.param_groups[0]['lr'])
 
                 batch_size = batch[0].size(0)
                 epoch_loss += loss.item() * batch_size
