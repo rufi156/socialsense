@@ -335,7 +335,9 @@ def get_domain_dataloaders(df, return_splits=False, batch_sizes=(32, 64, 64), re
     domain_splits = {}
     for domain in df['domain'].unique():
         domain_df = df[df['domain'] == domain]
-        loaders, split_idx = _create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=seed, double_img=double_img, transforms=transforms, num_workers=num_workers, include_test=include_test)
+        if include_test is not None:
+            df_test = include_test[include_test['domain'] == domain]
+        loaders, split_idx = _create_dataloaders(domain_df, batch_sizes=batch_sizes, resize_img_to=resize_img_to, seed=seed, double_img=double_img, transforms=transforms, num_workers=num_workers, include_test=df_test)
         domain_dataloaders[domain] = loaders
         domain_splits[domain] = split_idx
 
