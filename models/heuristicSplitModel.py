@@ -93,9 +93,13 @@ class DualBranchModel(nn.Module):
             branch_feature_dim = 64
 
         # Optional freeze params
-        if self.freeze_branches:
-            for p in branch.parameters():
-                p.requires_grad = False
+        if self.freeze_branches == 'full':
+            for param in branch.parameters():
+                param.requires_grad = False
+        if self.freeze_branches == 'partial':
+            for param in branch[:15].parameters():
+                param.requires_grad = False
+
         
         if self.branch_norm:
             branch = branch.append(nn.LayerNorm(branch_feature_dim))
