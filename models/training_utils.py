@@ -181,7 +181,7 @@ def dualbranch_batch(model, batch, device, detach_base, binary, full_replay, los
     }
     return total_loss, metrics
 
-def evaluate_model(model, dataloader, criterion, device , tsne=None):
+def evaluate_model(model, dataloader, criterion, device):
     model.eval()
     total_loss = 0.0
     total_samples = 0
@@ -191,20 +191,16 @@ def evaluate_model(model, dataloader, criterion, device , tsne=None):
             loss, _ = heuristic_dualbranch_batch(model, batch, device, mse_criterion=criterion)
             total_loss += loss.item() * batch_size
             total_samples += batch_size
-            val_loss = total_loss/total_samples
-
+        val_loss = total_loss/total_samples
     return val_loss
 
-def cross_domain_validation(model, domain_dataloaders, criterion, device, validation_set='val', tsne=None):
+def cross_domain_validation(model, domain_dataloaders, criterion, device, validation_set='val'):
     results = {}
     for domain, loaders in domain_dataloaders.items():
         val_loader = loaders[validation_set]
-        if tsne:
-            val_loss, tsne = evaluate_model(model, val_loader, criterion, device, tsne)
-        else:
-            val_loss = evaluate_model(model, val_loader, criterion, device)
+        val_loss = evaluate_model(model, val_loader, criterion, device)
         results[domain] = val_loss
-    return (results, tsne) if tsne else results
+    return results
 
 def average_metrics(metrics_list):
     # metrics_list: list of dicts, each dict contains metrics for a batch
