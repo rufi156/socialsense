@@ -2,25 +2,25 @@ import argparse
 import os
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
 import numpy as np
 from sklearn.model_selection import train_test_split
 import random
-SEED = 42
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True  # Enforce deterministic algorithms
-        torch.backends.cudnn.benchmark = False     # Disable benchmark for reproducibility
+# SEED = 42
+# def set_seed(seed):
+#     random.seed(seed)
+#     np.random.seed(seed)
+#     torch.manual_seed(seed)
+#     if torch.cuda.is_available():
+#         torch.cuda.manual_seed_all(seed)
+#         torch.backends.cudnn.deterministic = True  # Enforce deterministic algorithms
+#         torch.backends.cudnn.benchmark = False     # Disable benchmark for reproducibility
 
-    os.environ['PYTHONHASHSEED'] = str(seed)       # Seed Python hashing, which can affect ordering
-set_seed(SEED)
+#     os.environ['PYTHONHASHSEED'] = str(seed)       # Seed Python hashing, which can affect ordering
+# set_seed(SEED)
 
 DATASET_DIR = (Path("..") / ".." / "datasets").resolve()
 DATASETS = ["OFFICE-MANNERSDB", "MANNERSDBPlus"]
@@ -173,7 +173,7 @@ def validate_final_data(df):
 import torchvision.transforms.functional as F
 
 class DualImageDataset(Dataset):
-    def __init__(self, df, depth_transform=None, yolo_transform=None, resize_img_to=(224,224)):
+    def __init__(self, df, depth_transform=None, yolo_transform=None, resize_img_to=(144,256)):
         self.df = df.reset_index(drop=True)
         self.resize_img_to = resize_img_to
         self.depth_transform = depth_transform or self._get_depth_transform()
@@ -192,6 +192,7 @@ class DualImageDataset(Dataset):
         return transforms.Compose([
             transforms.Resize(self.resize_img_to),
             transforms.ToTensor(),
+            transforms.Normalize(*NORM_VALUES)
         ])
     
     def __len__(self):
@@ -237,7 +238,7 @@ class DualImageDataset(Dataset):
         return depth_image, yolo_image, torch.from_numpy(scaled_labels), domain_index
 
 class ImageLabelDataset(Dataset):
-    def __init__(self, df, transform=None, resize_img_to=(288, 512), return_labels=True):
+    def __init__(self, df, transform=None, resize_img_to=(144,256), return_labels=True):
         self.df = df.reset_index(drop=True)
         self.resize_img_to = resize_img_to
         self.transform = transform or self._get_transform()
@@ -275,7 +276,7 @@ class ImageLabelDataset(Dataset):
   
         return (image, torch.from_numpy(scaled_labels), domain_index) if self.return_labels else image
 
-def _create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
+def _create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(144,256), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
     """Create train/val dataloaders using image_path as unique key"""
     
     # Get image paths as indexing for split
@@ -321,7 +322,7 @@ def _create_dataloaders(df, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), 
     return (loaders, split_idx)
 
 
-def get_domain_dataloaders(df, return_splits=False, batch_sizes=(32, 64, 64), resize_img_to=(288, 512), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
+def get_domain_dataloaders(df, return_splits=False, batch_sizes=(32, 64, 64), resize_img_to=(144,256), seed=42, double_img=False, transforms=None, num_workers=0, include_test=None):
     """
     Creates domain stratifed dataloaders
 
@@ -342,6 +343,31 @@ def get_domain_dataloaders(df, return_splits=False, batch_sizes=(32, 64, 64), re
         domain_splits[domain] = split_idx
 
     return domain_dataloaders if not return_splits else (domain_dataloaders, domain_splits)
+
+
+def combine_all_dataloaders(domain_dataloaders):
+
+    train_datasets = [dl.dataset for dl in [domain_dataloaders[d]['train'] for d in domain_dataloaders]]
+    val_datasets   = [dl.dataset for dl in [domain_dataloaders[d]['val'] for d in domain_dataloaders]]
+    test_datasets  = [dl.dataset for dl in [domain_dataloaders[d]['test'] for d in domain_dataloaders]]
+
+
+    all_train_dataset = ConcatDataset(train_datasets)
+    all_val_dataset   = ConcatDataset(val_datasets)
+    all_test_dataset  = ConcatDataset(test_datasets)
+
+
+    all_train_loader = DataLoader(all_train_dataset, batch_size=32, shuffle=True)
+    all_val_loader   = DataLoader(all_val_dataset, batch_size=64, shuffle=False)
+    all_test_loader  = DataLoader(all_test_dataset, batch_size=64, shuffle=False)
+
+    all_domain_dataloaders={}
+    all_domain_dataloaders['AllDomains']={
+        'train':all_train_loader,
+        'val':all_val_loader,
+        'test':all_test_loader
+    }
+    return all_domain_dataloaders
 
 
 def create_crossvalidation_loaders(df, folds=5, batch_sizes=(32, 64, 64), resize_img_to=(128, 128), num_workers=0):
