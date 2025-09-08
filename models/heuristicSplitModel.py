@@ -36,7 +36,7 @@ class CLIPEncoderWrapper(nn.Module):
             return self.clip_model.encode_image(x)
 
 class DualBranchModel(nn.Module):
-    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False, branch_norm=False):
+    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False, branch_norm=False, norm_type='batch'):
         assert not (setup['branch'] == 'clip' and clip_model is None), "clip_model must be provided for CLIP branch"
         if setup['branch'] == 'clip' and freeze_branches is False:
             warnings.warn("CLIP branch will be frozen regardless of freeze_branches", UserWarning)
@@ -44,6 +44,15 @@ class DualBranchModel(nn.Module):
         self.setup = setup
         self.freeze_branches = freeze_branches
         self.branch_norm = branch_norm
+        self.norm_type = norm_type
+
+        def norm(dim):
+            if self.norm_type == "layer":
+                return nn.LayerNorm(dim)
+            elif self.norm_type == "batch":
+                return nn.BatchNorm1d(dim)
+            else:
+                raise ValueError(f"Unknown norm type: {self.norm_type}")
 
         if self.setup['branch'] == 'resnet18':
             model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
@@ -61,6 +70,15 @@ class DualBranchModel(nn.Module):
                 nn.Flatten()
             )
             branch_feature_dim = 1280
+
+            # Optional freeze params
+            if freeze_branches == 'full':
+                for param in branch.parameters():
+                    param.requires_grad = False
+            if freeze_branches == 'partial':
+                for param in branch[0][:15].parameters():
+                    param.requires_grad = False
+
         elif self.setup['branch'] == 'efficientnetb0':
             model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.IMAGENET1K_V1).features
             branch = nn.Sequential(
@@ -75,32 +93,20 @@ class DualBranchModel(nn.Module):
         
         elif self.setup['branch'] == 'simple':
             branch = nn.Sequential(
-                nn.Conv2d(3, 8, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(2, 2),
-                nn.Conv2d(8, 16, kernel_size=3, padding=1),
-                nn.ReLU(),
-                nn.MaxPool2d(2, 2),
-                nn.Conv2d(16, 32, kernel_size=3, padding=1),
+                nn.Conv2d(3, 32, kernel_size=3, padding=1),
                 nn.ReLU(),
                 nn.MaxPool2d(2, 2),
                 nn.Conv2d(32, 64, kernel_size=3, padding=1),
                 nn.ReLU(),
                 nn.MaxPool2d(2, 2),
+                nn.Conv2d(64, 128, kernel_size=3, padding=1),
+                nn.ReLU(),
+                nn.MaxPool2d(2, 2),
                 nn.AdaptiveAvgPool2d(1),
                 nn.Flatten()
             )
-            branch_feature_dim = 64
+            branch_feature_dim = 128
 
-        # Optional freeze params
-        if self.freeze_branches == 'full':
-            for param in branch.parameters():
-                param.requires_grad = False
-        if self.freeze_branches == 'partial':
-            for param in branch[:15].parameters():
-                param.requires_grad = False
-
-        
         if self.branch_norm:
             branch = branch.append(nn.LayerNorm(branch_feature_dim))
         
@@ -121,20 +127,20 @@ class DualBranchModel(nn.Module):
 
 
         self.fusion_dim = soc_feature_dim + env_feature_dim
-        
+
         self.head = nn.Sequential(
             nn.Linear(self.fusion_dim, 512),
-            nn.BatchNorm1d(512),
+            norm(512),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
             nn.Linear(512, 256),
-            nn.BatchNorm1d(256),
+            norm(256),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
             nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
+            norm(128),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
