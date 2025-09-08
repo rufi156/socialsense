@@ -180,3 +180,5 @@ checkpoints/
 plots/
 
 __*
+
+huggingface_cache/
