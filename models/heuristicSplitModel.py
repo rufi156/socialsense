@@ -36,7 +36,7 @@ class CLIPEncoderWrapper(nn.Module):
             return self.clip_model.encode_image(x)
 
 class DualBranchModel(nn.Module):
-    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False, branch_norm=False, norm_type='batch'):
+    def __init__(self, num_outputs=9, dropout_rate=0.3, setup={'branch':'mobilenetv2'}, clip_model=None, freeze_branches=False, branch_norm=False):
         assert not (setup['branch'] == 'clip' and clip_model is None), "clip_model must be provided for CLIP branch"
         if setup['branch'] == 'clip' and freeze_branches is False:
             warnings.warn("CLIP branch will be frozen regardless of freeze_branches", UserWarning)
@@ -44,15 +44,6 @@ class DualBranchModel(nn.Module):
         self.setup = setup
         self.freeze_branches = freeze_branches
         self.branch_norm = branch_norm
-        self.norm_type = norm_type
-
-        def norm(dim):
-            if self.norm_type == "layer":
-                return nn.LayerNorm(dim)
-            elif self.norm_type == "batch":
-                return nn.BatchNorm1d(dim)
-            else:
-                raise ValueError(f"Unknown norm type: {self.norm_type}")
 
         if self.setup['branch'] == 'resnet18':
             model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
@@ -107,6 +98,11 @@ class DualBranchModel(nn.Module):
             )
             branch_feature_dim = 128
 
+        if self.setup.get('env') == 'label':
+            max_rooms = 30,
+            self.env_branch = nn.Embedding(max_rooms, 64)
+            env_feature_dim = 64
+
         if self.branch_norm:
             branch = branch.append(nn.LayerNorm(branch_feature_dim))
         
@@ -124,23 +120,30 @@ class DualBranchModel(nn.Module):
         # Override one of the branches to run ablations
         if self.setup.get('env') == 'ablated':
             env_feature_dim = 0
+        elif self.setup.get('env') == 'ablated_soc':
+            soc_feature_dim = 0
+        
+        if self.setup.get('env') == 'label':
+            max_rooms = 30,
+            self.env_branch = nn.Embedding(max_rooms, 64)
+            env_feature_dim = 64
 
 
         self.fusion_dim = soc_feature_dim + env_feature_dim
 
         self.head = nn.Sequential(
             nn.Linear(self.fusion_dim, 512),
-            norm(512),
+            nn.LayerNorm(512),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
             nn.Linear(512, 256),
-            norm(256),
+            nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
             nn.Linear(256, 128),
-            norm(128),
+            nn.LayerNorm(128),
             nn.ReLU(),
             nn.Dropout(dropout_rate),
             
@@ -152,8 +155,13 @@ class DualBranchModel(nn.Module):
             env_features = torch.zeros(social_imgs.size(0), 0, device=social_imgs.device, dtype=social_imgs.dtype)
         else:
             env_features = self.env_branch(env_imgs)
-        
-        social_features = self.social_branch(social_imgs)
+            social_features = self.social_branch(social_imgs)
+
+        if social_imgs is None:
+            social_features = torch.zeros(env_imgs.size(0), 0, device=env_imgs.device, dtype=env_imgs.dtype)
+        else:
+            env_features = self.env_branch(env_imgs)
+            social_features = self.social_branch(social_imgs)
 
         fused_features = torch.cat([social_features, env_features], dim=1)
         scores = self.head(fused_features)
