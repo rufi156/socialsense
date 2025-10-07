@@ -165,6 +165,7 @@ cython_debug/
 *.pth
 *.pth.tar
 *.pt
+*.hdf5
 
 
 #Pickles
@@ -182,3 +183,4 @@ plots/
 __*
 
 huggingface_cache/
+extra files/
